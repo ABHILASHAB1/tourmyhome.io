@@ -1,0 +1,163 @@
+services:
+  # ==========================================
+  # Infrastructure Services
+  # ==========================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: souqai_postgres
+    environment:
+      POSTGRES_USER: souqai_user
+      POSTGRES_PASSWORD: souqai_password
+      POSTGRES_DB: souqai_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - souqai-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U souqai_user -d souqai_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: souqai_redis
+    ports:
+      - "6379:6379"
+    networks:
+      - souqai-net
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: souqai_qdrant
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+      
+  admin-panel:
+    build:
+      context: ./admin_panel
+      dockerfile: Dockerfile
+    ports:
+      - "8080:80"
+    depends_on:
+      - iam-api
+      - inventory-api
+      - intelligence-api
+    networks:
+      - souqai-net
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:80"
+    depends_on:
+      - iam-api
+      - inventory-api
+      - intelligence-api
+    networks:
+      - souqai-net
+
+  kafka:
+    image: bitnami/kafka:latest
+    container_name: souqai_kafka
+    environment:
+      # Use KRaft mode instead of Zookeeper to save RAM
+      - KAFKA_ENABLE_KRAFT=yes
+      - KAFKA_CFG_PROCESS_ROLES=broker,controller
+      - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093
+      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092
+      - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=1@kafka:9093
+      - KAFKA_CFG_NODE_ID=1
+      - ALLOW_PLAINTEXT_LISTENER=yes
+    ports:
+      - "9092:9092"
+    networks:
+      - souqai-net
+
+  # ==========================================
+  # SouqAI Microservices
+  # ==========================================
+  iam-api:
+    build:
+      context: ./backend/iam_svc
+      dockerfile: Dockerfile
+    container_name: souqai_iam
+    ports:
+      - "8001:8001"
+    environment:
+      - DATABASE_URL=postgresql://souqai_user:souqai_password@postgres:5432/souqai_db
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - souqai-net
+
+  inventory-api:
+    build:
+      context: ./backend/inventory_svc
+      dockerfile: Dockerfile
+    container_name: souqai_inventory
+    ports:
+      - "8002:8002"
+    environment:
+      - DATABASE_URL=postgresql://souqai_user:souqai_password@postgres:5432/souqai_db
+      - KAFKA_BROKER=kafka:9092
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+    networks:
+      - souqai-net
+
+  intelligence-api:
+    build:
+      context: ./backend/intelligence_svc
+      dockerfile: Dockerfile
+    container_name: souqai_intelligence
+    ports:
+      - "8003:8003"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - QDRANT_URL=http://qdrant:6333
+      - KAFKA_BROKER=kafka:9092
+    depends_on:
+      redis:
+        condition: service_started
+      qdrant:
+        condition: service_started
+      kafka:
+        condition: service_started
+    networks:
+      - souqai-net
+
+  messaging-ws:
+    build:
+      context: ./backend/messaging_svc
+      dockerfile: Dockerfile
+    container_name: souqai_messaging
+    ports:
+      - "8004:8004"
+    environment:
+      - DATABASE_URL=postgresql://souqai_user:souqai_password@postgres:5432/souqai_db
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - souqai-net
+
+networks:
+  souqai-net:
+    driver: bridge
+
+volumes:
+  pgdata:
+  qdrant_data:

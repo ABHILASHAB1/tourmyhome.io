@@ -1,0 +1,57 @@
+name: Continuous Integration (CI)
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test-backend:
+    name: Test Backend Services
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [iam_svc, inventory_svc, intelligence_svc, messaging_svc]
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Dependencies
+        run: |
+          cd backend/${{ matrix.service }}
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Syntax & Compilation Checks
+        run: |
+          cd backend/${{ matrix.service }}
+          python -m compileall src/
+
+  test-frontend:
+    name: Test Frontend (Next.js)
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Dependencies
+        run: |
+          cd frontend
+          npm ci
+
+      - name: Run Next.js Build
+        run: |
+          cd frontend
+          npm run build
